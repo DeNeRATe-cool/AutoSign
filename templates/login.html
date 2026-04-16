@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AutoSign 登录</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+</head>
+<body class="login-page">
+  <a class="skip-link" href="#login-main">跳到主要内容</a>
+
+  <section class="login-shell" aria-labelledby="login-title">
+    <header class="card login-hero">
+      <p class="eyebrow">AutoSign</p>
+      <p class="login-hero-subtitle">IClass Access Panel</p>
+    </header>
+
+    <main id="login-main" class="card login-card" tabindex="-1" aria-labelledby="login-title">
+      <h1 id="login-title" class="sr-only">AutoSign 登录</h1>
+
+      {% if error %}
+        <div class="alert error" role="alert" aria-live="assertive">{{ error }}</div>
+      {% endif %}
+
+      <form method="post" action="/login" class="form-grid">
+        <div class="form-item">
+          <label for="student_id">学号</label>
+          <input
+            id="student_id"
+            type="text"
+            name="student_id"
+            inputmode="numeric"
+            autocomplete="username"
+            required
+            value="{{ student_id or '' }}"
+          />
+        </div>
+
+        <div class="form-item">
+          <label for="password">密码</label>
+          <input
+            id="password"
+            type="password"
+            name="password"
+            autocomplete="current-password"
+            required
+          />
+        </div>
+
+        <div class="setting-group" role="group" aria-label="连接与安全设置">
+          <label class="row-inline" for="verify_ssl">
+            <input id="verify_ssl" type="checkbox" name="verify_ssl" {% if verify_ssl is not defined or verify_ssl %}checked{% endif %} />
+            SSL 验证
+          </label>
+
+          <label class="row-inline" for="use_vpn">
+            <input id="use_vpn" type="checkbox" name="use_vpn" {% if use_vpn %}checked{% endif %} />
+            WebVPN
+          </label>
+        </div>
+
+        <button type="submit" class="btn primary full-width">登录</button>
+      </form>
+    </main>
+  </section>
+</body>
+</html>
