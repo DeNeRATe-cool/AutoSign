@@ -49,7 +49,7 @@
           <tr>
             <th scope="col">日期</th>
             <th scope="col">时间</th>
-            <th scope="col">距签到</th>
+            <th scope="col">倒计时</th>
             <th scope="col">课程</th>
             <th scope="col">出勤状态</th>
             <th scope="col">操作</th>
@@ -67,25 +67,6 @@
       </details>
     </section>
   </main>
-
-  <div
-    id="promptModal"
-    class="modal hidden"
-    role="dialog"
-    aria-modal="true"
-    aria-labelledby="promptTitle"
-    aria-describedby="promptText"
-    tabindex="-1"
-  >
-    <div class="modal-card">
-      <h3 id="promptTitle">即将开始</h3>
-      <p id="promptText"></p>
-      <div class="modal-actions">
-        <button id="promptNo" class="btn" type="button">暂不签到</button>
-        <button id="promptYes" class="btn primary" type="button">立即签到</button>
-      </div>
-    </div>
-  </div>
 
   <script>
     window.__AUTOSIGN__ = {

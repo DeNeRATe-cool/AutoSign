@@ -1,10 +1,7 @@
 const state = {
   rows: [],
-  notifications: [],
   events: [],
-  activePrompt: null,
   loading: false,
-  lastFocus: null,
 };
 
 const weekBody = document.getElementById("weekBody");
@@ -16,12 +13,6 @@ const systemMessage = document.getElementById("systemMessage");
 const statTotal = document.getElementById("statTotal");
 const statToday = document.getElementById("statToday");
 const statPending = document.getElementById("statPending");
-
-const promptModal = document.getElementById("promptModal");
-const promptText = document.getElementById("promptText");
-const promptYes = document.getElementById("promptYes");
-const promptNo = document.getElementById("promptNo");
-const SIGN_ADVANCE_SECONDS = 5 * 60;
 
 function formatDate(iso) {
   const d = new Date(iso);
@@ -56,10 +47,6 @@ function formatCountdown(totalSeconds) {
   return `${hh}:${mm}:${ss}`;
 }
 
-function signAtMs(startIso) {
-  return new Date(startIso).getTime() - SIGN_ADVANCE_SECONDS * 1000;
-}
-
 function attendanceMeta(attendance) {
   if (attendance === "正常出勤") {
     return { cls: "status status-ok", text: "正常" };
@@ -68,6 +55,14 @@ function attendanceMeta(attendance) {
     return { cls: "status status-late", text: "迟到" };
   }
   return { cls: "status status-miss", text: "未出勤" };
+}
+
+function attendanceMetaForRow(row, nowMs) {
+  const startMs = new Date(row.startTime).getTime();
+  if (Number.isFinite(startMs) && nowMs < startMs) {
+    return { cls: "status status-not-started", text: "未开始" };
+  }
+  return attendanceMeta(row.attendance);
 }
 
 function sameDay(isoDate, now) {
@@ -100,43 +95,85 @@ function renderStats() {
   const now = new Date();
   const total = state.rows.length;
   const today = state.rows.filter((row) => sameDay(row.startTime, now)).length;
-  const pending = state.rows.filter((row) => row.attendance === "未出勤").length;
+  const pending = state.rows.filter((row) => {
+    const startMs = new Date(row.startTime).getTime();
+    return Number.isFinite(startMs) && startMs <= now.getTime() && row.attendance !== "正常出勤";
+  }).length;
 
   statTotal.textContent = String(total);
   statToday.textContent = String(today);
   statPending.textContent = String(pending);
 }
 
-function resolveCountdownText(attendance, targetMs, nowMs) {
-  if (attendance !== "未出勤") {
-    return { text: "已完成", state: "done" };
+function resolveCountdownText(row, nowMs) {
+  const attendance = row.attendance || "";
+  if (attendance === "正常出勤" || attendance === "迟到") {
+    return { text: "已签到", state: "done" };
   }
 
-  if (!Number.isFinite(targetMs)) {
+  const startMs = new Date(row.startTime).getTime();
+  const endMs = new Date(row.endTime).getTime();
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) {
     return { text: "--:--:--", state: "waiting" };
   }
 
-  const diffSeconds = Math.floor((targetMs - nowMs) / 1000);
-  if (diffSeconds > 0) {
-    return { text: formatCountdown(diffSeconds), state: "waiting" };
+  const preSignStartMs = startMs - 10 * 60 * 1000;
+  if (nowMs < preSignStartMs) {
+    return {
+      text: formatCountdown(Math.ceil((preSignStartMs - nowMs) / 1000)),
+      state: "waiting",
+    };
   }
 
-  if (diffSeconds >= -30 * 60) {
-    return { text: "已到时点", state: "due" };
+  if (nowMs > endMs) {
+    return { text: "无法签到", state: "unavailable" };
   }
 
-  return { text: "已过时点", state: "overdue" };
+  if (nowMs < startMs) {
+    return { text: "可签到", state: "presign" };
+  }
+
+  if (nowMs <= endMs) {
+    return { text: "上课中", state: "due" };
+  }
+
+  return { text: "无法签到", state: "unavailable" };
 }
 
 function updateCountdownElements() {
   const nowMs = Date.now();
   document.querySelectorAll("[data-countdown]").forEach((node) => {
-    const attendance = node.getAttribute("data-attendance") || "";
-    const targetMs = Number(node.getAttribute("data-sign-at") || "0");
-    const { text, state } = resolveCountdownText(attendance, targetMs, nowMs);
+    const row = {
+      attendance: node.getAttribute("data-attendance") || "",
+      startTime: node.getAttribute("data-start-time") || "",
+      endTime: node.getAttribute("data-end-time") || "",
+    };
+    const { text, state } = resolveCountdownText(row, nowMs);
     node.textContent = text;
     node.setAttribute("data-state", state);
   });
+}
+
+function signButtonMeta(row, nowMs) {
+  const attendance = row.attendance || "";
+  const startMs = new Date(row.startTime).getTime();
+  const endMs = new Date(row.endTime).getTime();
+  const preSignStartMs = Number.isFinite(startMs) ? startMs - 10 * 60 * 1000 : NaN;
+  const canSignNow =
+    Number.isFinite(startMs) &&
+    Number.isFinite(endMs) &&
+    nowMs >= preSignStartMs &&
+    nowMs <= endMs;
+
+  if (attendance === "正常出勤" || attendance === "迟到") {
+    return { canSign: false, text: "已签到", mode: "done" };
+  }
+
+  if (!canSignNow) {
+    return { canSign: false, text: "无法签到", mode: "blocked" };
+  }
+
+  return { canSign: true, text: "迟到签到", mode: "late" };
 }
 
 async function apiGet(path) {
@@ -169,24 +206,24 @@ function renderWeekRows() {
   }
 
   emptyHint.classList.add("hidden");
+  const nowMs = Date.now();
+
   for (const row of state.rows) {
     const tr = document.createElement("tr");
-    const meta = attendanceMeta(row.attendance);
     const teacherInfo = row.teacher ? `<div class="course-sub">${row.teacher}</div>` : "";
     const courseInfo = `<div class="course-main">${row.courseName}</div>${teacherInfo}`;
-
-    const canManualSign = row.attendance === "未出勤";
-    const signTargetMs = signAtMs(row.startTime);
-    const countdown = resolveCountdownText(row.attendance, signTargetMs, Date.now());
-    const opBtn = canManualSign
-      ? `<button class="btn" type="button" data-sign="${row.key}" aria-label="立即签到：${row.courseName} ${formatTimeRange(row.startTime, row.endTime)}">立即签到</button>`
-      : `<button class="btn" type="button" disabled>完成</button>`;
+    const countdown = resolveCountdownText(row, nowMs);
+    const signMeta = signButtonMeta(row, nowMs);
+    const meta = attendanceMetaForRow(row, nowMs);
+    const opBtn = signMeta.canSign
+      ? `<button class="btn" type="button" data-sign="${row.key}" data-sign-mode="${signMeta.mode}" aria-label="${signMeta.text}：${row.courseName} ${formatTimeRange(row.startTime, row.endTime)}">${signMeta.text}</button>`
+      : `<button class="btn" type="button" disabled>${signMeta.text}</button>`;
 
     tr.innerHTML = `
       <th scope="row">${formatDate(row.startTime)}</th>
       <td>${formatTimeRange(row.startTime, row.endTime)}</td>
       <td>
-        <span class="countdown-chip" data-countdown data-sign-at="${signTargetMs}" data-attendance="${row.attendance}" data-state="${countdown.state}">
+        <span class="countdown-chip" data-countdown data-start-time="${row.startTime}" data-end-time="${row.endTime}" data-attendance="${row.attendance}" data-state="${countdown.state}">
           ${countdown.text}
         </span>
       </td>
@@ -202,10 +239,11 @@ function renderWeekRows() {
   document.querySelectorAll("button[data-sign]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const key = btn.getAttribute("data-sign");
+      const mode = btn.getAttribute("data-sign-mode") || "normal";
       if (!key) return;
 
       btn.disabled = true;
-      btn.textContent = "签到中...";
+      btn.textContent = mode === "late" ? "迟到签到中..." : "签到中...";
       try {
         const result = await apiPost("/api/sign-now", { key });
         announce(result.message || "签到请求已提交", "info");
@@ -220,87 +258,18 @@ function renderWeekRows() {
 
 function renderEvents() {
   eventList.innerHTML = "";
-  for (const event of state.events.slice(-30).reverse()) {
+  for (const event of state.events.slice(-40).reverse()) {
     const li = document.createElement("li");
     li.className = `level-${event.level}`;
     const ts = new Date(event.at).toLocaleTimeString("zh-CN", {
       hour12: false,
     });
-    li.textContent = `${ts} · ${event.message}`;
+    const line1 = document.createElement("div");
+    line1.className = "event-line";
+    line1.textContent = `${ts} · ${event.message}`;
+    li.appendChild(line1);
     eventList.appendChild(li);
   }
-}
-
-function showPrompt(notification) {
-  state.activePrompt = notification;
-  state.lastFocus = document.activeElement;
-
-  const t = new Date(notification.startTime).toLocaleTimeString("zh-CN", {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
-
-  promptText.textContent = `${notification.courseName} 将于 ${t} 开始，是否立即签到？`;
-  promptModal.classList.remove("hidden");
-  promptModal.focus();
-  promptYes.focus();
-}
-
-function hidePrompt() {
-  state.activePrompt = null;
-  promptModal.classList.add("hidden");
-  if (state.lastFocus && typeof state.lastFocus.focus === "function") {
-    state.lastFocus.focus();
-  }
-}
-
-async function handlePromptDecision(action) {
-  if (!state.activePrompt) return;
-
-  const key = state.activePrompt.key;
-  try {
-    const result = await apiPost("/api/prompt-action", { key, action });
-    announce(result.message || "操作已处理", "info");
-  } catch (err) {
-    announce(err.message || "操作失败", "error");
-  } finally {
-    hidePrompt();
-    await refreshAll();
-  }
-}
-
-function trapModalKeyboard(event) {
-  if (promptModal.classList.contains("hidden")) return;
-
-  if (event.key === "Escape") {
-    event.preventDefault();
-    void handlePromptDecision("later");
-    return;
-  }
-
-  if (event.key !== "Tab") return;
-
-  const focusable = [promptNo, promptYes].filter((el) => !el.disabled);
-  if (focusable.length === 0) return;
-
-  const currentIndex = focusable.indexOf(document.activeElement);
-  if (event.shiftKey) {
-    if (currentIndex <= 0) {
-      event.preventDefault();
-      focusable[focusable.length - 1].focus();
-    }
-  } else if (currentIndex === focusable.length - 1) {
-    event.preventDefault();
-    focusable[0].focus();
-  }
-}
-
-function processNotifications() {
-  if (state.activePrompt) return;
-  if (state.notifications.length === 0) return;
-
-  showPrompt(state.notifications[0]);
 }
 
 async function refreshWeek() {
@@ -317,10 +286,8 @@ async function refreshRuntime() {
   if (!data.ok) {
     throw new Error(data.message || "获取运行状态失败");
   }
-  state.notifications = data.notifications || [];
   state.events = data.events || [];
   renderEvents();
-  processNotifications();
 }
 
 async function refreshAll() {
@@ -351,16 +318,6 @@ logoutBtn.addEventListener("click", async () => {
     window.location.href = "/";
   }
 });
-
-promptYes.addEventListener("click", () => {
-  void handlePromptDecision("sign_now");
-});
-
-promptNo.addEventListener("click", () => {
-  void handlePromptDecision("later");
-});
-
-promptModal.addEventListener("keydown", trapModalKeyboard);
 
 void refreshAll();
 setInterval(() => {

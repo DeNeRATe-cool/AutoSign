@@ -27,11 +27,28 @@ def _logged_in() -> bool:
         return False
 
 
+@app.after_request
+def add_no_store_headers(response):
+    if response.mimetype == "text/html":
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+    return response
+
+
 @app.get("/")
 def index():
     if _logged_in():
         return redirect(url_for("dashboard"))
-    return render_template("login.html")
+
+    login_error = session.pop("login_error", None)
+    login_form = session.pop("login_form", {})
+    return render_template(
+        "login.html",
+        error=login_error,
+        student_id=login_form.get("student_id", ""),
+        use_vpn=login_form.get("use_vpn", False),
+        verify_ssl=login_form.get("verify_ssl", True),
+    )
 
 
 @app.post("/login")
@@ -42,29 +59,31 @@ def login():
     verify_ssl = bool(request.form.get("verify_ssl"))
 
     if not student_id or not password:
-        return render_template(
-            "login.html",
-            error="请输入学号和密码",
-            student_id=student_id,
-            use_vpn=use_vpn,
-            verify_ssl=verify_ssl,
-        )
+        session["login_error"] = "请输入学号和密码"
+        session["login_form"] = {
+            "student_id": student_id,
+            "use_vpn": use_vpn,
+            "verify_ssl": verify_ssl,
+        }
+        return redirect(url_for("index"))
 
     client = IClassClient(use_vpn=use_vpn, verify_ssl=verify_ssl)
     try:
         auth = client.login(student_id=student_id, password=password)
     except Exception as exc:  # noqa: BLE001
-        return render_template(
-            "login.html",
-            error=f"登录失败：{exc}",
-            student_id=student_id,
-            use_vpn=use_vpn,
-            verify_ssl=verify_ssl,
-        )
+        session["login_error"] = f"登录失败：{exc}"
+        session["login_form"] = {
+            "student_id": student_id,
+            "use_vpn": use_vpn,
+            "verify_ssl": verify_ssl,
+        }
+        return redirect(url_for("index"))
 
     token = str(uuid4())
     service.register_user(token, client)
 
+    session.pop("login_error", None)
+    session.pop("login_form", None)
     session["runtime_token"] = token
     session["student_id"] = student_id
     session["user_name"] = auth.user_name

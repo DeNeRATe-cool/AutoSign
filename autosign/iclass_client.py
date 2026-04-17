@@ -144,7 +144,7 @@ class IClassClient:
         endpoint = f"{self._base_8347()}/app/course/get_stu_course_sched.action"
         headers = self._headers()
 
-        # 方案 A：对齐 Rust 版本（POST + ?id= + Sessionid）
+        # 方案 A：优先对齐公开仓库的请求方式（POST + query params + sessionId）
         url_a = f"{endpoint}?id={quote(self.auth.user_id)}"
         resp = self.session.post(
             url_a,
@@ -157,7 +157,7 @@ class IClassClient:
         if sessions is not None:
             return sessions
 
-        # 方案 B：对齐另一个实现（GET + id/dateStr + sessionId）
+        # 方案 B：兼容旧实现（GET + id/dateStr + sessionId）
         resp = self.session.get(
             endpoint,
             params={"id": self.auth.user_id, "dateStr": date_str},
@@ -176,23 +176,28 @@ class IClassClient:
         if not schedule_id:
             raise IClassApiError("schedule_id 不能为空")
 
-        ts = timestamp_ms if timestamp_ms is not None else self.get_server_timestamp_ms()
+        ts = timestamp_ms if timestamp_ms is not None else self.get_adjusted_timestamp_ms()
 
         endpoints = self._sign_endpoints()
         headers = self._headers()
         last_error: str | None = None
+        payload = {
+            "id": self.auth.user_id,
+            "courseSchedId": schedule_id,
+            "timestamp": str(ts),
+        }
 
         for endpoint in endpoints:
-            url = f"{endpoint}?id={quote(self.auth.user_id)}"
             try:
                 resp = self.session.post(
-                    url,
-                    params={"courseSchedId": schedule_id, "timestamp": str(ts)},
+                    endpoint,
+                    params=payload,
                     headers=headers,
                     timeout=20,
+                    allow_redirects=False,
                 )
                 data = self._to_json_or_none(resp)
-                if data is not None:
+                if isinstance(data, dict):
                     return data
                 last_error = f"{endpoint} 返回非 JSON, HTTP {resp.status_code}"
             except requests.RequestException as exc:
@@ -226,6 +231,10 @@ class IClassClient:
 
         # fallback: 本地时间 + 登录时测得的偏移
         return int(time.time() * 1000) + int(self._server_offset_ms)
+
+    def get_adjusted_timestamp_ms(self, now: datetime | None = None) -> int:
+        now = now or datetime.now(tz=SHANGHAI_TZ)
+        return int(now.timestamp() * 1000) + int(self._server_offset_ms)
 
     def _fetch_auth_context(self, student_id: str) -> AuthContext:
         login_api = f"{self._base_8347()}/app/user/login.action"
@@ -401,10 +410,11 @@ class IClassClient:
             "Accept": "application/json",
             "Accept-Language": "zh-CN,zh;q=0.9",
             "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
+                "Mozilla/5.0 (Linux; Android 13; M2012K11AC Build/TKQ1.221114.001; wv) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/120.0.0.0 "
+                "Mobile Safari/537.36 wxwork/4.1.30 MicroMessenger/7.0.1 Language/zh"
             ),
-            "Sessionid": self.auth.session_header,
+            "sessionId": self.auth.session_header,
         }
 
     def _timestamp_endpoints(self) -> list[str]:

@@ -526,6 +526,11 @@ section.card {
   background: var(--danger-faint);
 }
 
+.status-not-started {
+  color: var(--ink-soft);
+  background: transparent;
+}
+
 .countdown-chip {
   font-family: "JetBrains Mono", "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   color: var(--accent);
@@ -533,13 +538,27 @@ section.card {
 }
 
 .countdown-chip[data-state="waiting"] {
+  color: var(--ink-soft);
+  border-style: dashed;
+  background: transparent;
+}
+
+.countdown-chip[data-state="presign"] {
   color: var(--accent);
+  border-style: dashed;
+  background: var(--accent-faint);
 }
 
 .countdown-chip[data-state="due"] {
   color: var(--warn);
   border-style: dashed;
   background: var(--warn-faint);
+}
+
+.countdown-chip[data-state="unavailable"] {
+  color: var(--ink-soft);
+  border-style: dashed;
+  background: transparent;
 }
 
 .countdown-chip[data-state="overdue"] {
@@ -551,6 +570,11 @@ section.card {
 .countdown-chip[data-state="done"] {
   color: var(--success);
   background: var(--success-faint);
+}
+
+.countdown-chip[data-state="late"] {
+  color: var(--warn);
+  background: var(--warn-faint);
 }
 
 .log-panel {
@@ -595,6 +619,19 @@ section.card {
   padding: 8px 9px;
   font-size: 0.84rem;
   color: var(--ink-soft);
+}
+
+.event-line {
+  line-height: 1.45;
+}
+
+.event-meta {
+  margin-top: 4px;
+  font-size: 0.76rem;
+  line-height: 1.45;
+  color: var(--ink-soft);
+  opacity: 0.95;
+  word-break: break-word;
 }
 
 .level-success {
