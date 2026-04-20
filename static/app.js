@@ -173,6 +173,10 @@ function signButtonMeta(row, nowMs) {
     return { canSign: false, text: "无法签到", mode: "blocked" };
   }
 
+  if (nowMs < startMs) {
+    return { canSign: true, text: "可签到", mode: "presign" };
+  }
+
   return { canSign: true, text: "迟到签到", mode: "late" };
 }
 
