@@ -8,3 +8,7 @@ venv/
 .DS_Store
 
 /scripts/
+CLI/build/
+CLI/dist/
+CLI/src/*.egg-info/
+CLI/.pytest_cache/
