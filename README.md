@@ -5,7 +5,7 @@
 <h1 align="center">AutoSign</h1>
 
 <p align="center">
-  北航 iClass 自动签到工具集（默认分支：CLI）
+  北航 iClass 自动签到工具集（支持 CLI/Web 版本）
 </p>
 
 <p align="center">
@@ -26,16 +26,13 @@
 
 ## CLI 版本亮点
 
-- 多账号串行签到（每 1 分钟轮询）
-- 登录回退策略（直连失败自动尝试 WebVPN）
-- 完整签到窗口判定：
-  - 开课前 10 分钟内：可签到
-  - 开课后至下课前：可迟到签到
-- `run` 默认后台启动，不占用当前终端
-- 支持 `autosign stop` 一键关闭后台进程
-- 倒计时展示为时分秒（`HH时MM分SS秒`）
-- 自动创建运行目录：`~/.autosign/config.yaml` 与 `~/.autosign/log/`
-- 提供跨平台开机自启管理（macOS/Linux/Windows）
+- 支持多账号管理
+- 定时轮询，串行签到
+- 支持**校园网直连**与 **VPN 登陆**
+- 完整签到窗口判定：开课前 10 分钟到下课
+- **全自动后台签到**，`run` 默认后台启动，不占用当前终端
+- 支持命令行用户配置与签到状态查询
+- 提供跨平台**开机自启**管理（macOS/Linux/Windows）
 
 ## 安装
 
@@ -45,7 +42,7 @@
 pip install autosign-buaa-cli
 ```
 
-已验证版本：`autosign-buaa-cli==0.1.2`（PyPI 安装与命令冒烟测试通过）。
+版本更新方法：`pip install --upgrade autosign-buaa-cli==0.1.2`
 
 ### 本地开发安装
 
