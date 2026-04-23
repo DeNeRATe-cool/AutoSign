@@ -45,7 +45,7 @@
 pip install autosign-buaa-cli
 ```
 
-已验证版本：`autosign-buaa-cli==0.1.1`（TestPyPI 与 PyPI 均通过安装和命令冒烟测试）。
+已验证版本：`autosign-buaa-cli==0.1.2`（PyPI 安装与命令冒烟测试通过）。
 
 ### 本地开发安装
 
