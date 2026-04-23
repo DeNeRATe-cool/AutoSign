@@ -58,11 +58,20 @@ function attendanceMeta(attendance) {
 }
 
 function attendanceMetaForRow(row, nowMs) {
+  const attendance = row.attendance || "";
   const startMs = new Date(row.startTime).getTime();
+  if (attendance === "正常出勤" || attendance === "迟到") {
+    if (Number.isFinite(startMs) && nowMs < startMs) {
+      return { cls: "status status-ok", text: "已签到" };
+    }
+    return attendanceMeta(attendance);
+  }
+
   if (Number.isFinite(startMs) && nowMs < startMs) {
     return { cls: "status status-not-started", text: "未开始" };
   }
-  return attendanceMeta(row.attendance);
+
+  return attendanceMeta(attendance);
 }
 
 function sameDay(isoDate, now) {
@@ -97,7 +106,7 @@ function renderStats() {
   const today = state.rows.filter((row) => sameDay(row.startTime, now)).length;
   const pending = state.rows.filter((row) => {
     const startMs = new Date(row.startTime).getTime();
-    return Number.isFinite(startMs) && startMs <= now.getTime() && row.attendance !== "正常出勤";
+    return Number.isFinite(startMs) && startMs <= now.getTime() && row.attendance === "未出勤";
   }).length;
 
   statTotal.textContent = String(total);
