@@ -1,23 +1,39 @@
-# AutoSign（CLI 版本）
+<p align="center">
+  <img src="./icon.svg" width="120" alt="AutoSign icon" />
+</p>
 
-北航 iClass 自动签到命令行工具（分支：`CLI`）。
+<h1 align="center">AutoSign</h1>
 
-## 版本导航
+<p align="center">
+  北航 iClass 自动签到工具集（默认分支：CLI）
+</p>
 
-- 当前分支（CLI）：命令行自动签到工具
-- Web 版本请查看分支：[`Web`](https://github.com/DeNeRATe-cool/AutoSign/tree/Web)
+<p align="center">
+  <a href="https://pypi.org/project/autosign-buaa-cli/"><img alt="PyPI" src="https://img.shields.io/pypi/v/autosign-buaa-cli"></a>
+  <a href="https://pypi.org/project/autosign-buaa-cli/"><img alt="Python" src="https://img.shields.io/pypi/pyversions/autosign-buaa-cli"></a>
+  <a href="https://github.com/DeNeRATe-cool/AutoSign/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/DeNeRATe-cool/AutoSign?style=flat"></a>
+  <a href="https://github.com/DeNeRATe-cool/AutoSign/commits/CLI"><img alt="Last Commit" src="https://img.shields.io/github/last-commit/DeNeRATe-cool/AutoSign/CLI"></a>
+</p>
 
-## 功能
+## 项目导航
 
-- 自动创建 `~/.autosign/config.yaml` 与 `~/.autosign/log/`
-- 多账号串行签到（每分钟轮询）
-- 登录策略：直连失败自动回退 WebVPN
-- 课程状态识别：`未签到` / `正常出勤` / `迟到签到`
-- 签到窗口判定与自动签到：
+- `CLI` 分支（当前）：命令行自动签到工具，适合常驻后台运行。
+- `Web` 分支：浏览器控制台版本，适合可视化查看与手动操作。
+
+快速跳转：
+- CLI: [https://github.com/DeNeRATe-cool/AutoSign/tree/CLI](https://github.com/DeNeRATe-cool/AutoSign/tree/CLI)
+- Web: [https://github.com/DeNeRATe-cool/AutoSign/tree/Web](https://github.com/DeNeRATe-cool/AutoSign/tree/Web)
+
+## CLI 版本亮点
+
+- 多账号串行签到（每 1 分钟轮询）
+- 登录回退策略（直连失败自动尝试 WebVPN）
+- 完整签到窗口判定：
   - 开课前 10 分钟内：可签到
   - 开课后至下课前：可迟到签到
-- 运行日志按天落盘，重启后同日追加写入
-- 支持账号管理、本周签到查询、开机自启管理
+- `run` 模式终端静默，日志全量写入文件
+- 自动创建运行目录：`~/.autosign/config.yaml` 与 `~/.autosign/log/`
+- 提供跨平台开机自启管理（macOS/Linux/Windows）
 
 ## 安装
 
@@ -27,7 +43,7 @@
 pip install autosign-buaa-cli
 ```
 
-已验证：`autosign-buaa-cli==0.1.1` 可从 TestPyPI 与 PyPI 安装，并可正常执行 `autosign --help`、`autosign user list`、`autosign week --help`。
+已验证版本：`autosign-buaa-cli==0.1.1`（TestPyPI 与 PyPI 均通过安装和命令冒烟测试）。
 
 ### 本地开发安装
 
@@ -36,14 +52,63 @@ cd CLI
 pip install -e .
 ```
 
-## 初始化配置
+## 快速开始
 
-首次执行任意命令会自动生成：
+### 1) 启动自动签到服务
+
+```bash
+autosign run
+```
+
+调试单轮执行：
+
+```bash
+autosign run --once
+```
+
+### 2) 管理账号
+
+```bash
+autosign user add --username 23370001 --password "your_password"
+autosign user list
+autosign user delete --username 23370001
+```
+
+### 3) 查看某账号本周签到情况
+
+```bash
+autosign week --username 23370001
+autosign week --username 23370001 --password "temp_password"
+```
+
+### 4) 管理开机自启
+
+```bash
+autosign autostart enable
+autosign autostart status
+autosign autostart disable
+```
+
+## 命令速查
+
+| 命令 | 说明 |
+| --- | --- |
+| `autosign run` | 常驻运行自动签到循环（终端静默） |
+| `autosign run --once` | 仅执行一轮，便于调试 |
+| `autosign user add` | 添加或更新账号 |
+| `autosign user list` | 列出已配置账号（密码脱敏） |
+| `autosign user delete` | 删除账号 |
+| `autosign week` | 查询本周课程与签到状态 |
+| `autosign autostart enable/disable/status` | 开机自启管理 |
+
+## 配置与日志
+
+首次执行命令会自动初始化：
 
 - `~/.autosign/config.yaml`
-- `~/.autosign/log/`
+- `~/.autosign/log/YYYY-MM-DD.txt`
 
-默认 `config.yaml` 结构：
+默认配置示例：
 
 ```yaml
 accounts: []
@@ -63,126 +128,45 @@ autostart:
   mode: off
 ```
 
-## 命令用法
+`run` 模式行为：
+- 不向终端输出日志
+- 日志按天归档，同日重启追加写入
+- 输出包含登录模式、课程状态、倒计时、签到结果与错误上下文
 
-### 1) 启动自动签到
+## 目录结构（CLI 分支）
 
-```bash
-autosign run
+```text
+.
+├── CLI/                 # Python 包与测试
+│   ├── src/autosign_cli/
+│   └── tests/
+├── icon.svg             # 仓库图标
+└── README.md            # 仓库首页（当前文件）
 ```
 
-说明：
+## 安全与合规
 
-- `run` 模式不会向终端输出日志
-- 所有日志写入 `~/.autosign/log/YYYY-MM-DD.txt`
-
-调试单轮（开发用）：
-
-```bash
-autosign run --once
-```
-
-### 2) 用户管理
-
-添加/更新用户：
-
-```bash
-autosign user add --username 23370001 --password "your_password"
-```
-
-删除用户：
-
-```bash
-autosign user delete --username 23370001
-```
-
-查看用户：
-
-```bash
-autosign user list
-```
-
-### 3) 查看某用户本周签到情况
-
-使用配置中的密码：
-
-```bash
-autosign week --username 23370001
-```
-
-临时覆盖密码：
-
-```bash
-autosign week --username 23370001 --password "temp_password"
-```
-
-### 4) 开机自启
-
-启用：
-
-```bash
-autosign autostart enable
-```
-
-禁用：
-
-```bash
-autosign autostart disable
-```
-
-状态：
-
-```bash
-autosign autostart status
-```
-
-指定平台模式（跨平台配置说明/排错时可用）：
-
-```bash
-autosign autostart enable --mode macos
-autosign autostart enable --mode linux
-autosign autostart enable --mode windows
-```
-
-## 日志说明
-
-日志文件路径：`~/.autosign/log/YYYY-MM-DD.txt`
-
-日志内容包括：
-
-- 登录方式（直连/VPN）
-- 本周课程摘要
-- 每节课签到状态
-- 自动签到倒计时
-- 可签到/可迟到签到判断
-- 签到成功或失败详情（含接口错误）
-
-## 安全说明
-
-- 密码按配置保存在 `config.yaml` 明文中
-- 程序会尝试将配置文件权限设为 `600`
-- 日志中会脱敏密码字段
+- 密码按配置要求保存在本地 `config.yaml`（明文）
+- 程序会尝试将配置文件权限收敛为 `600`
+- 日志会对敏感字段做脱敏处理
+- 本项目仅供学习与个人使用，请遵守学校及平台规范
 
 ## 常见问题
 
-### 登录一直失败
+### 登录失败且提示“请检查网络连接”
 
-日志出现“请检查网络连接”时，表示直连与 VPN 都失败。请检查：
+表示直连与 VPN 两种登录路径均失败。建议依次检查：
 
-- 当前网络环境
-- 学校认证服务状态
+- 当前网络状态
+- 学校认证服务可用性
 - 账号密码是否正确
 
 ### 开机自启启用失败
 
-请先执行：
+执行：
 
 ```bash
 autosign autostart status
 ```
 
-工具会输出对应系统的手动配置指引。
-
-## 免责声明
-
-仅供学习与个人使用，请遵守学校及平台相关规定。
+程序会输出当前平台的手动配置指引。
