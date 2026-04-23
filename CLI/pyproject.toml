@@ -4,9 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "autosign-buaa-cli"
-version = "0.1.0"
+version = "0.1.1"
 description = "BUAA iClass AutoSign command-line tool"
-readme = "README.md"
+readme = {text = "BUAA iClass AutoSign command-line tool. See repository README on the CLI branch for full documentation.", content-type = "text/markdown"}
 requires-python = ">=3.9"
 license = "MIT"
 authors = [
