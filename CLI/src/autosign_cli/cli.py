@@ -1,6 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import os
+import signal
+import subprocess
+import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Sequence
@@ -21,6 +26,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     run_p = sub.add_parser("run", help="启动自动签到服务")
     run_p.add_argument("--once", action="store_true", help="仅执行一轮（测试与调试用）")
+    run_p.add_argument("--foreground", action="store_true", help=argparse.SUPPRESS)
+
+    sub.add_parser("stop", help="停止后台自动签到服务")
 
     user_p = sub.add_parser("user", help="用户管理")
     user_sub = user_p.add_subparsers(dest="user_cmd", required=True)
@@ -68,16 +76,54 @@ def _build_logger(manager: ConfigManager) -> DailyFileLogger:
 
 
 def _cmd_run(manager: ConfigManager, once: bool) -> int:
+    return _cmd_run_with_mode(manager, once=once, foreground=False)
+
+
+def _cmd_run_with_mode(manager: ConfigManager, once: bool, foreground: bool) -> int:
     logger = _build_logger(manager)
     runner = AutoSignRunner(config_manager=manager, logger=logger)
     if once:
         runner.process_once()
         return 0
 
+    if not foreground:
+        existing_pid = manager.read_pid()
+        if existing_pid is not None and _is_process_alive(existing_pid):
+            print(f"AutoSign 已在后台运行 (pid={existing_pid})")
+            return 0
+        manager.clear_pid()
+
+        pid = _spawn_background_runner(manager)
+        manager.write_pid(pid)
+        print(f"AutoSign 后台服务已启动 (pid={pid})")
+        return 0
+
     try:
         runner.run_forever()
     except KeyboardInterrupt:
         logger.info("收到中断信号，服务退出")
+    finally:
+        manager.clear_pid()
+    return 0
+
+
+def _cmd_stop(manager: ConfigManager) -> int:
+    pid = manager.read_pid()
+    if pid is None:
+        print("AutoSign 后台服务未运行")
+        return 0
+
+    if not _is_process_alive(pid):
+        manager.clear_pid()
+        print("检测到 PID 文件残留，已清理")
+        return 0
+
+    stopped = _terminate_process(pid, timeout_seconds=5.0)
+    manager.clear_pid()
+    if stopped:
+        print(f"AutoSign 后台服务已停止 (pid={pid})")
+    else:
+        print(f"AutoSign 后台服务停止超时，已清理 PID 文件 (pid={pid})")
     return 0
 
 
@@ -167,6 +213,61 @@ def _cmd_autostart(manager: ConfigManager, args: argparse.Namespace) -> int:
         return 1
 
 
+def _spawn_background_runner(manager: ConfigManager) -> int:
+    cmd = [
+        sys.executable,
+        "-m",
+        "autosign_cli",
+        "--home",
+        str(manager.base_dir),
+        "run",
+        "--foreground",
+    ]
+
+    kwargs: dict[str, object] = {
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+        "close_fds": True,
+    }
+
+    if os.name == "nt":
+        kwargs["creationflags"] = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        kwargs["start_new_session"] = True
+
+    proc = subprocess.Popen(cmd, **kwargs)  # noqa: S603
+    return int(proc.pid)
+
+
+def _is_process_alive(pid: int) -> bool:
+    try:
+        os.kill(int(pid), 0)
+    except OSError:
+        return False
+    return True
+
+
+def _terminate_process(pid: int, timeout_seconds: float = 5.0) -> bool:
+    target = int(pid)
+    try:
+        os.kill(target, signal.SIGTERM)
+    except OSError:
+        return True
+
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        if not _is_process_alive(target):
+            return True
+        time.sleep(0.1)
+
+    try:
+        os.kill(target, signal.SIGKILL)
+    except OSError:
+        pass
+    return not _is_process_alive(target)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
@@ -175,7 +276,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     manager.ensure_environment()
 
     if args.command == "run":
-        return _cmd_run(manager, once=args.once)
+        return _cmd_run_with_mode(manager, once=args.once, foreground=bool(args.foreground))
+    if args.command == "stop":
+        return _cmd_stop(manager)
     if args.command == "user":
         return _cmd_user(manager, args)
     if args.command == "week":

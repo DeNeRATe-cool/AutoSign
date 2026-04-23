@@ -31,7 +31,9 @@
 - 完整签到窗口判定：
   - 开课前 10 分钟内：可签到
   - 开课后至下课前：可迟到签到
-- `run` 模式终端静默，日志全量写入文件
+- `run` 默认后台启动，不占用当前终端
+- 支持 `autosign stop` 一键关闭后台进程
+- 倒计时展示为时分秒（`HH时MM分SS秒`）
 - 自动创建运行目录：`~/.autosign/config.yaml` 与 `~/.autosign/log/`
 - 提供跨平台开机自启管理（macOS/Linux/Windows）
 
@@ -58,6 +60,12 @@ pip install -e .
 
 ```bash
 autosign run
+```
+
+关闭后台服务：
+
+```bash
+autosign stop
 ```
 
 调试单轮执行：
@@ -93,7 +101,8 @@ autosign autostart disable
 
 | 命令 | 说明 |
 | --- | --- |
-| `autosign run` | 常驻运行自动签到循环（终端静默） |
+| `autosign run` | 后台启动自动签到循环（命令立即返回） |
+| `autosign stop` | 停止后台自动签到进程 |
 | `autosign run --once` | 仅执行一轮，便于调试 |
 | `autosign user add` | 添加或更新账号 |
 | `autosign user list` | 列出已配置账号（密码脱敏） |
@@ -111,12 +120,11 @@ autosign autostart disable
 默认配置示例：
 
 ```yaml
-accounts: []
-account_examples:
-  - username: "23370001"
-    password: "your_password_1"
-  - username: "23370002"
-    password: "your_password_2"
+accounts:
+  # - username: "23370001"
+  #   password: "your_password_1"
+  # - username: "23370002"
+  #   password: "your_password_2"
 logger:
   enabled: true
   level: INFO
@@ -129,8 +137,9 @@ autostart:
 ```
 
 `run` 模式行为：
-- 不向终端输出日志
+- 默认以后台进程运行，命令立即返回
 - 日志按天归档，同日重启追加写入
+- 倒计时以时分秒格式记录（`HH时MM分SS秒`）
 - 输出包含登录模式、课程状态、倒计时、签到结果与错误上下文
 
 ## 目录结构（CLI 分支）

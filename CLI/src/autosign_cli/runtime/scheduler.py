@@ -27,6 +27,14 @@ class SessionDecision:
     countdown_seconds: int = 0
 
 
+def format_countdown_hms(total_seconds: int) -> str:
+    safe = max(0, int(total_seconds))
+    hours = safe // 3600
+    minutes = (safe % 3600) // 60
+    seconds = safe % 60
+    return f"{hours:02d}时{minutes:02d}分{seconds:02d}秒"
+
+
 def decide_session_action(now: datetime, session: ClassSession) -> SessionDecision:
     if session.attendance != "未签到":
         return SessionDecision(action=SessionAction.ALREADY_SIGNED)
@@ -140,12 +148,14 @@ class AutoSignRunner:
 
             decision = decide_session_action(now, session)
             if decision.action == SessionAction.COUNTDOWN:
+                countdown_text = format_countdown_hms(decision.countdown_seconds)
                 self.logger.info(
                     "自动签到倒计时",
                     meta={
                         "username": username,
                         "course": session.course_name,
                         "seconds": decision.countdown_seconds,
+                        "countdown": countdown_text,
                     },
                 )
                 continue

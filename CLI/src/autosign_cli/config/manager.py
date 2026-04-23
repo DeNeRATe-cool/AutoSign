@@ -9,10 +9,6 @@ import yaml
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "accounts": [],
-    "account_examples": [
-        {"username": "23370001", "password": "your_password_1"},
-        {"username": "23370002", "password": "your_password_2"},
-    ],
     "logger": {
         "enabled": True,
         "level": "INFO",
@@ -36,13 +32,16 @@ class ConfigManager:
         self.base_dir = Path(base_dir)
         self.config_path = self.base_dir / "config.yaml"
         self.log_dir = self.base_dir / "log"
+        self.run_dir = self.base_dir / "run"
+        self.pid_path = self.run_dir / "autosign.pid"
 
     def ensure_environment(self) -> None:
         self.base_dir.mkdir(parents=True, exist_ok=True)
         self.log_dir.mkdir(parents=True, exist_ok=True)
+        self.run_dir.mkdir(parents=True, exist_ok=True)
 
         if not self.config_path.exists():
-            self.save(DEFAULT_CONFIG)
+            self._write_default_config_with_comments()
         else:
             self._secure_file(self.config_path)
 
@@ -50,10 +49,12 @@ class ConfigManager:
         self.ensure_environment()
         raw = self.config_path.read_text(encoding="utf-8")
         data = yaml.safe_load(raw) or {}
+        accounts = data.get("accounts")
+        if not isinstance(accounts, list):
+            accounts = []
 
         merged = {
-            "accounts": data.get("accounts", []),
-            "account_examples": data.get("account_examples", DEFAULT_CONFIG["account_examples"]),
+            "accounts": accounts,
             "logger": {**DEFAULT_CONFIG["logger"], **(data.get("logger") or {})},
             "runtime": {**DEFAULT_CONFIG["runtime"], **(data.get("runtime") or {})},
             "autostart": {**DEFAULT_CONFIG["autostart"], **(data.get("autostart") or {})},
@@ -117,8 +118,51 @@ class ConfigManager:
         data["autostart"]["mode"] = mode
         self.save(data)
 
+    def read_pid(self) -> int | None:
+        self.ensure_environment()
+        if not self.pid_path.exists():
+            return None
+
+        text = self.pid_path.read_text(encoding="utf-8").strip()
+        if not text:
+            return None
+
+        try:
+            return int(text)
+        except ValueError:
+            return None
+
+    def write_pid(self, pid: int) -> None:
+        self.ensure_environment()
+        self.pid_path.write_text(str(int(pid)), encoding="utf-8")
+        self._secure_file(self.pid_path)
+
+    def clear_pid(self) -> None:
+        if self.pid_path.exists():
+            self.pid_path.unlink()
+
     def _secure_file(self, path: Path) -> None:
         try:
             os.chmod(path, 0o600)
         except OSError:
             pass
+
+    def _write_default_config_with_comments(self) -> None:
+        content = (
+            "accounts:\n"
+            "  # - username: \"23370001\"\n"
+            "  #   password: \"your_password_1\"\n"
+            "  # - username: \"23370002\"\n"
+            "  #   password: \"your_password_2\"\n"
+            "logger:\n"
+            "  enabled: true\n"
+            "  level: INFO\n"
+            "runtime:\n"
+            "  interval_seconds: 60\n"
+            "  timezone: Asia/Shanghai\n"
+            "autostart:\n"
+            "  enabled: false\n"
+            "  mode: off\n"
+        )
+        self.config_path.write_text(content, encoding="utf-8")
+        self._secure_file(self.config_path)

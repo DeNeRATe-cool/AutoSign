@@ -1,41 +1,49 @@
 <svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
   <title id="title">AutoSign Icon</title>
-  <desc id="desc">Calendar shield with automatic sign check mark.</desc>
+  <desc id="desc">Premium calendar shield icon for AutoSign.</desc>
+
   <defs>
-    <linearGradient id="bg" x1="56" y1="56" x2="456" y2="456" gradientUnits="userSpaceOnUse">
+    <linearGradient id="g-bg" x1="48" y1="24" x2="464" y2="488" gradientUnits="userSpaceOnUse">
       <stop stop-color="#0EA5E9"/>
+      <stop offset="1" stop-color="#1D4ED8"/>
+    </linearGradient>
+    <linearGradient id="g-card" x1="122" y1="94" x2="390" y2="414" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#E8F0FF"/>
+    </linearGradient>
+    <linearGradient id="g-top" x1="122" y1="96" x2="390" y2="196" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1E40AF"/>
       <stop offset="1" stop-color="#2563EB"/>
     </linearGradient>
-    <linearGradient id="card" x1="126" y1="126" x2="386" y2="386" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#FFFFFF"/>
-      <stop offset="1" stop-color="#EAF2FF"/>
-    </linearGradient>
-    <filter id="shadow" x="88" y="96" width="336" height="336" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+    <filter id="f-shadow" x="90" y="74" width="332" height="372" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
       <feFlood flood-opacity="0" result="BackgroundImageFix"/>
       <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
       <feOffset dy="14"/>
-      <feGaussianBlur stdDeviation="12"/>
-      <feColorMatrix type="matrix" values="0 0 0 0 0.05 0 0 0 0 0.16 0 0 0 0 0.42 0 0 0 0.28 0"/>
+      <feGaussianBlur stdDeviation="11"/>
+      <feColorMatrix type="matrix" values="0 0 0 0 0.04 0 0 0 0 0.14 0 0 0 0 0.36 0 0 0 0.30 0"/>
       <feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_1_1"/>
       <feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_1_1" result="shape"/>
     </filter>
   </defs>
 
-  <rect x="56" y="56" width="400" height="400" rx="96" fill="url(#bg)"/>
+  <rect x="24" y="16" width="464" height="480" rx="108" fill="url(#g-bg)"/>
 
-  <g filter="url(#shadow)">
-    <rect x="116" y="110" width="280" height="292" rx="46" fill="url(#card)"/>
+  <path d="M86 112C128 66 190 40 256 40C322 40 384 66 426 112" stroke="#7DD3FC" stroke-opacity="0.45" stroke-width="20" stroke-linecap="round"/>
+
+  <g filter="url(#f-shadow)">
+    <rect x="112" y="88" width="288" height="320" rx="54" fill="url(#g-card)"/>
   </g>
 
-  <rect x="116" y="110" width="280" height="82" rx="46" fill="#1D4ED8"/>
-  <rect x="154" y="88" width="24" height="50" rx="12" fill="#BFDBFE"/>
-  <rect x="334" y="88" width="24" height="50" rx="12" fill="#BFDBFE"/>
+  <rect x="112" y="88" width="288" height="96" rx="54" fill="url(#g-top)"/>
+  <rect x="154" y="58" width="24" height="56" rx="12" fill="#BFDBFE"/>
+  <rect x="334" y="58" width="24" height="56" rx="12" fill="#BFDBFE"/>
 
-  <path d="M170 246H342" stroke="#AFC6FF" stroke-width="14" stroke-linecap="round"/>
-  <path d="M170 286H312" stroke="#AFC6FF" stroke-width="14" stroke-linecap="round"/>
+  <rect x="154" y="232" width="138" height="14" rx="7" fill="#AFC6FF"/>
+  <rect x="154" y="270" width="116" height="14" rx="7" fill="#AFC6FF"/>
+  <rect x="154" y="308" width="92" height="14" rx="7" fill="#AFC6FF"/>
 
-  <circle cx="332" cy="318" r="70" fill="#10B981"/>
-  <path d="M300 318L323 341L366 297" stroke="#F8FAFC" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="328" cy="322" r="76" fill="#10B981"/>
+  <path d="M293 323L319 349L367 299" stroke="#F8FAFC" stroke-width="17" stroke-linecap="round" stroke-linejoin="round"/>
 
-  <path d="M210 320L236 280H218L248 236" stroke="#1D4ED8" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M214 330L240 286H222L252 240" stroke="#1D4ED8" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>
