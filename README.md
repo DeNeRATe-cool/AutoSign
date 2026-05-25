@@ -50,7 +50,9 @@
 https://v.wjx.cn/vm/QCCYU1W.aspx# 
 
 > 填写了问卷的同学可以联系一下我，避免错过查看问卷时间
+> 
 > 微信号：yjyx112358
+> 
 > 微信名：DeNeRATe
 
 ## 安装
