@@ -1,6 +1,6 @@
 📡 **产品集**
 
-> **[AutoTD](https://github.com/DeNeRATe-cool/autoTD)**: BUAA TD PyPI
+> **[AutoTD](https://github.com/DeNeRATe-cool/autoTD)**: BUAA TD PyPI 实现 TD 自由
 > 
 > **[AutoBoya](https://github.com/DeNeRATe-cool/AutoBoya)**: 北航博雅课程命令行工具，支持后台运行、自动选课、签到与签退，实现博雅自由
 >
