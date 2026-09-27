@@ -48,12 +48,7 @@
 pip install autosign-buaa-cli
 ```
 
-版本更新方法：`python -m pip install --upgrade autosign-buaa-cli`。本次 iClass 接口适配版本为 `0.1.3`；更新后请重启后台服务以加载新代码：
-
-```bash
-autosign stop
-autosign run
-```
+版本更新方法：`pip install --upgrade autosign-buaa-cli==0.1.2`
 
 ### 本地开发安装
 
@@ -170,36 +165,13 @@ autostart:
 
 ## 常见问题
 
-### 登录失败
+### 登录失败且提示“请检查网络连接”
 
 表示直连与 VPN 两种登录路径均失败。建议依次检查：
 
 - 当前网络状态
 - 学校认证服务可用性
 - 账号密码是否正确
-
-错误信息会分别保留直连与 WebVPN 的失败原因。统一认证返回 401 时先检查密码或验证码；这与 iClass 的“用户不存在”（106）是不同阶段的问题。
-
-### iClass 接口适配（2026-09-27）
-
-请求协议依据 [UBAA 的服务器实现](https://github.com/BUAASubnet/UBAA/blob/e8a397fcb35a68147eee65a94c66ffb84e2f09fe/server/src/main/kotlin/cn/edu/ubaa/signin/SigninClient.kt) 和 [独立直连实现](https://github.com/BUAASubnet/UBAA/blob/e8a397fcb35a68147eee65a94c66ffb84e2f09fe/shared/src/commonMain/kotlin/cn/edu/ubaa/api/local/LocalSigninApi.kt) 核对。AutoSign 独立访问北航服务器，不依赖 UBAA 后端。
-
-- 登录从 `:8346/?type=jumpMyCenter` 的认证跳转取得 `loginName`，保留其中的 `+`，再作为 `:8347/app/user/login.action` 的 `phone`。不再直接传学号，也不再将 `loginName` 当作 `sessionId`。
-- 课表使用 `GET :8347/app/course/get_stu_course_sched.action`，携带查询参数 `id`、`dateStr` 和请求头 `sessionId`；兼容完整日期与时分格式。
-- 每次签到前获取服务器 `timestamp`；时间查询失败即停止，不用本机时间替代。自动运行器不再传入轮询开始时计算的时间。
-- 直连签到为 `POST http://iclass.buaa.edu.cn:8081/eschool/app/course/stu_scan_sign.action`；WebVPN 使用 8347 映射下的 `/app/course/stu_scan_sign.action`。`courseSchedId`、`timestamp` 放在查询参数，`id` 放在表单，`sessionId` 放在请求头。
-- 仅当 `STATUS` 为 `0`、`200` 或 `success`，且 `result.stuSignStatus=1` 时确认成功。出勤状态以课表为准，不按本地时间推测正常或迟到。
-- 明确的会话失效最多刷新一次；网络超时不会立即重复提交。课表错误不会被当作当天无课。
-
-本次验证命令：
-
-```bash
-cd CLI
-python -m pip install -e . pytest
-python -m pytest
-```
-
-测试使用模拟 HTTP 响应验证请求约定、异常响应和调度行为，不提交真实签到。源码适配与离线测试通过不等于已完成本人账号的真实签到验证。
 
 ### 开机自启启用失败
 
