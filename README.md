@@ -48,7 +48,12 @@
 pip install autosign-buaa-cli
 ```
 
-版本更新方法：`pip install --upgrade autosign-buaa-cli`。本次 iClass 接口适配尚未发布到 PyPI，请使用下方源码安装方式。
+版本更新方法：`python -m pip install --upgrade autosign-buaa-cli`。本次 iClass 接口适配版本为 `0.1.3`；更新后请重启后台服务以加载新代码：
+
+```bash
+autosign stop
+autosign run
+```
 
 ### 本地开发安装
 
