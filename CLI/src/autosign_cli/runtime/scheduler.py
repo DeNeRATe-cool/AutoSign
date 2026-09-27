@@ -8,7 +8,7 @@ from typing import Callable
 from zoneinfo import ZoneInfo
 
 from autosign_cli.config.manager import ConfigManager
-from autosign_cli.core.iclass_client import IClassClient
+from autosign_cli.core.iclass_client import IClassApiError, IClassClient
 from autosign_cli.core.models import ClassSession
 from autosign_cli.runtime.logging import DailyFileLogger
 
@@ -61,11 +61,14 @@ def login_with_fallback(
     try:
         direct_client.login(username, password)
         return direct_client, "direct"
-    except Exception:
-        pass
+    except Exception as exc:
+        direct_error = str(exc)
 
     vpn_client = client_factory(True)
-    vpn_client.login(username, password)
+    try:
+        vpn_client.login(username, password)
+    except Exception as exc:
+        raise IClassApiError(f"直连失败：{direct_error}；WebVPN 失败：{exc}") from None
     return vpn_client, "vpn"
 
 
@@ -120,7 +123,7 @@ class AutoSignRunner:
             self.logger.info("登录成功", meta={"username": username, "mode": mode})
         except Exception as exc:  # noqa: BLE001
             self.logger.error(
-                "请检查网络连接",
+                "登录失败",
                 meta={"username": username},
                 exc=exc,
             )
@@ -170,16 +173,9 @@ class AutoSignRunner:
 
     def _sign_course(self, client: IClassClient, session: ClassSession, now: datetime, late: bool, username: str) -> None:
         try:
-            ts = client.get_adjusted_timestamp_ms(now)
-            resp = client.sign_now(session.schedule_id, ts)
-            status = str(resp.get("STATUS", "")) if isinstance(resp, dict) else ""
-            if status == "0":
-                if late:
-                    self.logger.info("迟到签到成功", meta={"username": username, "course": session.course_name})
-                    session.raw_status = "2"
-                else:
-                    self.logger.info("正常签到成功", meta={"username": username, "course": session.course_name})
-                    session.raw_status = "1"
+            resp = client.sign_now(session.schedule_id)
+            if IClassClient.is_sign_success(resp):
+                self.logger.info("签到成功，出勤状态以课表为准", meta={"username": username, "course": session.course_name})
                 return
 
             errmsg = resp.get("ERRMSG", "未知错误") if isinstance(resp, dict) else "响应格式异常"
@@ -189,7 +185,6 @@ class AutoSignRunner:
                     "username": username,
                     "course": session.course_name,
                     "errmsg": errmsg,
-                    "response": resp,
                 },
             )
         except Exception as exc:  # noqa: BLE001

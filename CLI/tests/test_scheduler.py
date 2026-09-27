@@ -1,6 +1,8 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+import pytest
+
 from autosign_cli.core.models import ClassSession
 from autosign_cli.runtime.scheduler import (
     AutoSignRunner,
@@ -111,3 +113,83 @@ def test_countdown_log_includes_hms_text(monkeypatch):
     meta = countdown_records[0][2]
     assert meta["seconds"] == 6600
     assert meta["countdown"] == "01时50分00秒"
+
+
+class _RecordingLogger:
+    def __init__(self):
+        self.records = []
+
+    def info(self, message, meta=None):
+        self.records.append(("info", message, meta or {}))
+
+    def warning(self, message, meta=None):
+        self.records.append(("warning", message, meta or {}))
+
+    def error(self, message, meta=None, exc=None):
+        self.records.append(("error", message, meta or {}))
+
+
+class _SigningClient:
+    def __init__(self, session, response):
+        self.session = session
+        self.response = response
+        self.signed_ids = []
+
+    def get_week_schedule(self, now):
+        return [self.session]
+
+    def get_adjusted_timestamp_ms(self, now):
+        raise AssertionError("The runner must let the client obtain a fresh server timestamp")
+
+    def sign_now(self, schedule_id):
+        self.signed_ids.append(schedule_id)
+        return self.response
+
+
+@pytest.mark.parametrize("now", [_dt(9, 55), _dt(10, 30)])
+@pytest.mark.parametrize("status", [0, "200", "success"])
+def test_runner_signs_without_local_timestamp_or_inventing_attendance(monkeypatch, now, status):
+    session = _session(10, 12)
+    client = _SigningClient(session, {"STATUS": status, "result": {"stuSignStatus": "1"}})
+    logger = _RecordingLogger()
+    runner = AutoSignRunner(config_manager=None, logger=logger)
+    monkeypatch.setattr(
+        "autosign_cli.runtime.scheduler.login_with_fallback",
+        lambda username, password, client_factory: (client, "direct"),
+    )
+
+    runner._process_user(now, "23370001", "pwd")
+
+    assert client.signed_ids == ["s1"]
+    assert any(level == "info" and "签到成功" in message for level, message, _ in logger.records)
+    assert not any(level == "error" for level, _, _ in logger.records)
+    # The sign confirmation does not establish normal/late attendance; the next
+    # schedule response remains the authority even when the local clock is late.
+    assert session.raw_status == "0"
+    assert not any("正常签到成功" in message or "迟到签到成功" in message for _, message, _ in logger.records)
+
+
+@pytest.mark.parametrize("response", [
+    {"STATUS": "0", "result": {"stuSignStatus": "0"}},
+    {"STATUS": "0", "result": {"stuSignStatus": "2"}},
+    {"STATUS": "0", "result": {}},
+    {"STATUS": "0"},
+    {"STATUS": "1", "result": {"stuSignStatus": "1"}},
+])
+def test_runner_does_not_report_success_without_server_confirmation(monkeypatch, response):
+    session = _session(10, 12)
+    client = _SigningClient(session, response)
+    logger = _RecordingLogger()
+    runner = AutoSignRunner(config_manager=None, logger=logger)
+    monkeypatch.setattr(
+        "autosign_cli.runtime.scheduler.login_with_fallback",
+        lambda username, password, client_factory: (client, "direct"),
+    )
+
+    runner._process_user(_dt(9, 55), "23370001", "pwd")
+
+    assert client.signed_ids == ["s1"]
+    assert session.raw_status == "0"
+    assert not any("签到成功" in message for _, message, _ in logger.records)
+    assert any(level == "error" and "签到失败" in message for level, message, _ in logger.records)
+    assert all("response" not in meta for _, _, meta in logger.records)

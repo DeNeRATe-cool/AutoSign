@@ -2,8 +2,11 @@ import io
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
+import pytest
+
 from autosign_cli.cli import main
 from autosign_cli.config.manager import ConfigManager
+from autosign_cli.core.iclass_client import IClassApiError
 
 
 def test_run_once_is_silent(tmp_path: Path):
@@ -64,3 +67,59 @@ def test_stop_is_idempotent_when_not_running(tmp_path: Path):
     assert code == 0
     assert "未运行" in out.getvalue()
     assert err.getvalue() == ""
+
+
+@pytest.mark.parametrize("failure_stage, expected_message", [
+    ("login", "登录失败"),
+    ("schedule", "获取本周课表失败"),
+])
+def test_week_failure_is_visible_and_returns_nonzero(tmp_path, monkeypatch, capsys, failure_stage, expected_message):
+    class _FailingClient:
+        def get_week_schedule(self, now):
+            raise IClassApiError("上游请求未成功")
+
+    def fake_login(username, password, client_factory):
+        assert username == "23370001"
+        assert password == "test-only-password"
+        if failure_stage == "login":
+            raise IClassApiError("上游请求未成功")
+        return _FailingClient(), "direct"
+
+    monkeypatch.setattr("autosign_cli.cli.login_with_fallback", fake_login)
+
+    code = main([
+        "--home", str(tmp_path / ".autosign"), "week",
+        "--username", "23370001", "--password", "test-only-password",
+    ])
+
+    captured = capsys.readouterr()
+    assert code == 1
+    assert expected_message in captured.out
+    assert "上游请求未成功" in captured.out
+    assert "课程名" not in captured.out
+    assert "test-only-password" not in captured.out
+    assert "Traceback" not in captured.out
+    assert captured.err == ""
+
+
+def test_week_with_successful_empty_schedule_still_succeeds(tmp_path, monkeypatch, capsys):
+    class _EmptyClient:
+        def get_week_schedule(self, now):
+            return []
+
+    monkeypatch.setattr(
+        "autosign_cli.cli.login_with_fallback",
+        lambda username, password, client_factory: (_EmptyClient(), "vpn"),
+    )
+
+    code = main([
+        "--home", str(tmp_path / ".autosign"), "week",
+        "--username", "23370001", "--password", "test-only-password",
+    ])
+
+    captured = capsys.readouterr()
+    assert code == 0
+    assert "登录方式: vpn" in captured.out
+    assert "课程名" in captured.out
+    assert "失败" not in captured.out
+    assert captured.err == ""

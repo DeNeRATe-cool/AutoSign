@@ -174,11 +174,14 @@ def _cmd_week(manager: ConfigManager, args: argparse.Namespace) -> int:
         )
     except Exception as exc:  # noqa: BLE001
         print(f"登录失败：{exc}")
-        print("请检查网络连接")
         return 1
 
     now = datetime.now(tz=ZoneInfo("Asia/Shanghai"))
-    sessions = client.get_week_schedule(now=now)
+    try:
+        sessions = client.get_week_schedule(now=now)
+    except Exception as exc:  # noqa: BLE001
+        print(f"获取本周课表失败：{exc}")
+        return 1
     print(f"登录方式: {mode}")
     print("课程名\t开始\t结束\t签到状态")
     for row in sessions:

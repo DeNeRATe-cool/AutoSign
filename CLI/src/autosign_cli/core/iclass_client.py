@@ -5,7 +5,7 @@ import warnings
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Any
-from urllib.parse import parse_qs, quote, urlparse
+from urllib.parse import unquote, urljoin, urlparse
 
 # Suppress noisy urllib OpenSSL runtime warning in CLI contexts.
 warnings.filterwarnings(
@@ -37,9 +37,17 @@ VPN_8347 = (
 )
 DIRECT_8346 = "https://iclass.buaa.edu.cn:8346"
 DIRECT_8347 = "https://iclass.buaa.edu.cn:8347"
+DIRECT_8081 = "http://iclass.buaa.edu.cn:8081"
+VPN_SSO = VPN_CAS_LOGIN_URL.split("/login?", 1)[0]
+REDIRECT_LIMIT = 8
+SUCCESS_STATUSES = {"0", "200", "success"}
 
 
 class IClassApiError(RuntimeError):
+    pass
+
+
+class _SessionExpired(IClassApiError):
     pass
 
 
@@ -61,59 +69,65 @@ class IClassClient:
         self._login_name: str | None = None
 
     def login(self, student_id: str, password: str) -> AuthContext:
+        # Never reuse another account's cookies or a previous loginName.
+        self.auth = None
+        self._login_name = None
+        self._server_offset_ms = 0
+        self.session.cookies.clear()
         if not student_id or not password:
             raise IClassApiError("学号和密码不能为空")
 
         entry_url = VPN_CAS_LOGIN_URL if self.use_vpn else SSO_LOGIN_URL
-        entry_params = None if self.use_vpn else {"service": f"{self._service_home()}/"}
-
-        resp = self.session.get(entry_url, params=entry_params, allow_redirects=True, timeout=20)
-        if self._looks_like_iclass(resp.url):
-            self._maybe_capture_login_name(resp.url)
-            return self._fetch_auth_context(student_id)
-
-        execution = self._parse_execution(resp.text)
-        if not execution:
-            raise IClassApiError("无法从 SSO 页面解析 execution，可能是登录页面结构变化")
-
-        payload = {
-            "username": student_id,
-            "password": password,
-            "submit": "登录",
-            "type": "username_password",
-            "execution": execution,
-            "_eventId": "submit",
+        entry_params = None if self.use_vpn else {
+            "service": f"{DIRECT_8346}/?type=jumpMyCenter"
         }
-        headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
-            ),
-            "Referer": entry_url,
-            "Content-Type": "application/x-www-form-urlencoded",
-        }
-
-        login_resp = self.session.post(
-            entry_url,
-            data=payload,
-            headers=headers,
+        response = self._request(
+            "get", entry_url, "打开统一认证", params=entry_params,
             allow_redirects=False,
-            timeout=20,
         )
+        response = self._follow_redirect(response)
+        execution = self._parse_execution(response.text)
+        if not self._login_name and execution:
+            soup = BeautifulSoup(response.text, "html.parser")
+            form = soup.find("form", {"id": "fm1"}) or soup.find("form")
+            payload = {
+                str(field["name"]): str(field.get("value", ""))
+                for field in (form.find_all("input", {"type": "hidden"}) if form else [])
+                if field.get("name")
+            }
+            payload.update({
+                "username": student_id, "password": password,
+                "submit": "登录", "execution": execution, "_eventId": "submit",
+            })
+            payload.setdefault("type", "username_password")
+            action = str(form.get("action", "")) if form else ""
+            login_url = self._resolve_redirect_url(response.url, action) if action else response.url
+            # A form action such as /login must not drop the CAS service target.
+            if not urlparse(login_url).query and urlparse(response.url).query:
+                login_url += "?" + urlparse(response.url).query
+            headers = {"Referer": response.url}
+            response = self._request(
+                "post", login_url, "统一认证登录", data=payload, headers=headers,
+                allow_redirects=False,
+            )
+            # CAS may return the password-expiry continuation as HTTP 200 or 401.
+            if BeautifulSoup(response.text, "html.parser").find("form", {"id": "continueForm"}):
+                response = self._handle_weak_password(login_url, response, headers)
+            if response.status_code == 401:
+                raise IClassApiError("统一认证拒绝登录，请检查账号密码或验证码（HTTP 401）")
+            response = self._follow_redirect(response)
 
-        if login_resp.status_code == 401:
-            login_resp = self._handle_weak_password(entry_url, login_resp, headers)
-
-        final_resp = self._follow_redirect(login_resp)
-        if final_resp is not None:
-            self._maybe_capture_login_name(final_resp.url)
-
-        if not self._looks_like_iclass(getattr(final_resp, "url", "")):
-            probe = self.session.get(f"{self._service_home()}/", allow_redirects=True, timeout=20)
-            self._maybe_capture_login_name(probe.url)
-            if not self._looks_like_iclass(probe.url):
-                raise IClassApiError(f"SSO 登录后未成功进入 iClass，最终 URL: {probe.url}")
-
+        if not self._login_name:
+            # WebVPN first lands on its portal. iClass needs its own SSO jump.
+            response = self._request(
+                "get", f"{self._service_home()}/?type=jumpMyCenter",
+                "获取 iClass 登录标识", allow_redirects=False,
+            )
+            self._follow_redirect(response)
+        if not self._login_name:
+            raise IClassApiError(
+                "SSO 登录后未取得 iClass loginName，请检查账号密码、验证码或统一认证状态"
+            )
         return self._fetch_auth_context(student_id)
 
     def get_week_schedule(self, now: datetime | None = None) -> list[ClassSession]:
@@ -134,64 +148,77 @@ class IClassClient:
 
     def get_schedule_by_date(self, target_date: date) -> list[ClassSession]:
         self._ensure_login()
-        assert self.auth
         date_str = target_date.strftime("%Y%m%d")
+        for attempt in range(2):
+            assert self.auth
+            try:
+                response = self._request(
+                    "get", f"{self._base_8347()}/app/course/get_stu_course_sched.action",
+                    "查询课表", params={"id": self.auth.user_id, "dateStr": date_str},
+                    headers=self._headers(), allow_redirects=False,
+                )
+                data = self._read_json(response, "查询课表")
+                self._check_session(data)
+                sessions = self._parse_schedule_response(data, target_date)
+                if sessions is None:
+                    raise IClassApiError(self._error_message(data, f"获取 {date_str} 课表失败"))
+                return sessions
+            except _SessionExpired:
+                if attempt:
+                    raise
+                self._refresh_auth_context()
+        raise IClassApiError("查询课表失败")
 
-        endpoint = f"{self._base_8347()}/app/course/get_stu_course_sched.action"
-        headers = self._headers()
-
-        url_a = f"{endpoint}?id={quote(self.auth.user_id)}"
-        resp = self.session.post(url_a, params={"dateStr": date_str}, headers=headers, timeout=20)
-        data = self._to_json_or_none(resp)
-        sessions = self._parse_schedule_response(data)
-        if sessions is not None:
-            return sessions
-
-        resp = self.session.get(
-            endpoint,
-            params={"id": self.auth.user_id, "dateStr": date_str},
-            headers=headers,
-            timeout=20,
+    @staticmethod
+    def is_sign_success(data: Any) -> bool:
+        return (
+            isinstance(data, dict)
+            and str(data.get("STATUS")) in SUCCESS_STATUSES
+            and isinstance(data.get("result"), dict)
+            and str(data["result"].get("stuSignStatus")) == "1"
         )
-        data = self._to_json_or_none(resp)
-        sessions = self._parse_schedule_response(data)
-        if sessions is None:
-            raise IClassApiError(f"获取 {date_str} 课表失败")
-        return sessions
 
     def sign_now(self, schedule_id: str, timestamp_ms: int | None = None) -> dict[str, Any]:
         self._ensure_login()
-        assert self.auth
         if not schedule_id:
             raise IClassApiError("schedule_id 不能为空")
-
-        ts = timestamp_ms if timestamp_ms is not None else self.get_adjusted_timestamp_ms()
-        endpoints = self._sign_endpoints()
-        headers = self._headers()
-        payload = {
-            "id": self.auth.user_id,
-            "courseSchedId": schedule_id,
-            "timestamp": str(ts),
-        }
-
-        last_error: str | None = None
-        for endpoint in endpoints:
+        for attempt in range(2):
+            assert self.auth
             try:
-                resp = self.session.post(
-                    endpoint,
-                    params=payload,
-                    headers=headers,
-                    timeout=20,
+                # Do not derive a timestamp from the start of a long-running poll.
+                ts = timestamp_ms if timestamp_ms is not None and not attempt else self.get_server_timestamp_ms()
+                response = self._request(
+                    "post", self._sign_endpoints()[0], "签到",
+                    params={"courseSchedId": schedule_id, "timestamp": str(ts)},
+                    data={"id": self.auth.user_id}, headers=self._headers(),
                     allow_redirects=False,
                 )
-                data = self._to_json_or_none(resp)
-                if isinstance(data, dict):
-                    return data
-                last_error = f"{endpoint} 返回非 JSON, HTTP {resp.status_code}"
-            except requests.RequestException as exc:
-                last_error = f"{endpoint} 请求失败: {exc}"
+                data = self._read_json(response, "签到")
+                self._check_session(data)
+                if not self.is_sign_success(data):
+                    raise IClassApiError(self._error_message(data, "签到未成功确认（缺少 stuSignStatus=1）"))
+                return data
+            except _SessionExpired:
+                if attempt:
+                    raise
+                self._refresh_auth_context()
+        raise IClassApiError("签到失败")
 
-        raise IClassApiError(last_error or "签到失败")
+    def get_server_timestamp_ms(self) -> int:
+        self._ensure_login()
+        response = self._request(
+            "get", self._timestamp_endpoints()[0], "获取签到服务器时间",
+            allow_redirects=False,
+        )
+        data = self._read_json(response, "获取签到服务器时间")
+        self._check_session(data)
+        if "STATUS" in data and str(data["STATUS"]) not in SUCCESS_STATUSES:
+            raise IClassApiError(self._error_message(data, "获取签到服务器时间失败"))
+        timestamp = str(data.get("timestamp", ""))
+        if not timestamp.isdigit() or int(timestamp) <= 0:
+            raise IClassApiError("签到服务器未返回有效 timestamp，已取消本次签到")
+        # The upstream timestamp is opaque: do not convert seconds or guess locally.
+        return int(timestamp)
 
     def get_adjusted_timestamp_ms(self, now: datetime | None = None) -> int:
         now = now or datetime.now(tz=SHANGHAI_TZ)
@@ -199,31 +226,32 @@ class IClassClient:
 
     def _fetch_auth_context(self, student_id: str) -> AuthContext:
         login_api = f"{self._base_8347()}/app/user/login.action"
+        if not self._login_name:
+            raise IClassApiError("缺少 SSO loginName，不能用学号代替 iClass 登录标识")
         params = {
-            "phone": student_id,
+            "phone": self._login_name,
             "password": "",
             "verificationType": "2",
             "verificationUrl": "",
             "userLevel": "1",
         }
-        resp = self.session.get(login_api, params=params, timeout=20)
-        data = self._to_json_or_none(resp)
+        resp = self._request("get", login_api, "iClass 用户登录", params=params, allow_redirects=False)
+        data = self._read_json(resp, "iClass 用户登录")
 
-        if not isinstance(data, dict) or str(data.get("STATUS")) != "0":
-            raise IClassApiError(f"iClass 用户登录失败: {data}")
+        if str(data.get("STATUS")) not in SUCCESS_STATUSES:
+            raise IClassApiError(self._error_message(data, "iClass 用户登录失败"))
 
         result = data.get("result")
         if not isinstance(result, dict):
             raise IClassApiError("iClass 返回的用户信息结构异常")
 
-        user_id = str(result.get("id", "")).strip()
+        user_id = str(result.get("id") or "").strip()
         if not user_id:
             raise IClassApiError("iClass 用户信息缺少 id")
 
         session_header = str(
             result.get("sessionId")
             or result.get("sessionid")
-            or self._login_name
             or ""
         ).strip()
         if not session_header:
@@ -249,19 +277,26 @@ class IClassClient:
         )
         return self.auth
 
-    def _parse_schedule_response(self, data: Any) -> list[ClassSession] | None:
+    def _parse_schedule_response(self, data: Any, target_date: date | None = None) -> list[ClassSession] | None:
         if not isinstance(data, dict):
             return None
 
         status = str(data.get("STATUS", ""))
-        if status == "2":
+        # Live iClass uses STATUS=2 without an error for days with no courses.
+        # Do not hide a business error or malformed/nonempty result under this code.
+        if (
+            status == "2"
+            and not data.get("ERRMSG")
+            and str(data.get("ERRCODE") or "0") == "0"
+            and data.get("result") in (None, [])
+        ):
             return []
-        if status != "0":
+        if status not in SUCCESS_STATUSES:
             return None
 
         rows = data.get("result")
         if not isinstance(rows, list):
-            return []
+            return None
 
         sessions: list[ClassSession] = []
         for row in rows:
@@ -272,8 +307,8 @@ class IClassClient:
             if not schedule_id:
                 continue
 
-            start = self._parse_dt(row.get("classBeginTime"))
-            end = self._parse_dt(row.get("classEndTime"))
+            start = self._parse_dt(row.get("classBeginTime"), target_date)
+            end = self._parse_dt(row.get("classEndTime"), target_date)
             if start is None or end is None:
                 continue
 
@@ -285,7 +320,7 @@ class IClassClient:
                     teacher=str(row.get("teacherName") or row.get("teacher_name") or "未知教师"),
                     start_time=start,
                     end_time=end,
-                    raw_status=str(row.get("signStatus") or row.get("stuSignStatus") or "0"),
+                    raw_status=str(row.get("signStatus", row.get("stuSignStatus", "0"))),
                 )
             )
 
@@ -319,23 +354,50 @@ class IClassClient:
             "execution": execution,
             "_eventId": "ignoreAndContinue",
         }
-        return self.session.post(
-            entry_url,
-            data=continue_data,
-            headers=headers,
-            allow_redirects=False,
-            timeout=20,
+        action = str(continue_form.get("action", ""))
+        continue_url = self._resolve_redirect_url(response.url or entry_url, action) if action else (response.url or entry_url)
+        if not urlparse(continue_url).query and urlparse(response.url or entry_url).query:
+            continue_url += "?" + urlparse(response.url or entry_url).query
+        return self._request(
+            "post", continue_url, "继续统一认证登录", data=continue_data,
+            headers=headers, allow_redirects=False,
         )
 
-    def _follow_redirect(self, response: requests.Response) -> requests.Response | None:
-        if response.status_code not in (301, 302, 303, 307, 308):
-            return response
+    def _follow_redirect(self, response: requests.Response) -> requests.Response:
+        for _ in range(REDIRECT_LIMIT):
+            self._maybe_capture_login_name(response.url)
+            if self._login_name or response.status_code not in (301, 302, 303, 307, 308):
+                return response
+            location = response.headers.get("Location")
+            if not location:
+                raise IClassApiError("登录后重定向缺少 Location")
+            target = self._resolve_redirect_url(response.url, location)
+            self._maybe_capture_login_name(target)
+            if self._login_name:
+                return response
+            response = self._request("get", target, "跟随认证跳转", allow_redirects=False)
+        self._maybe_capture_login_name(response.url)
+        if not self._login_name and response.status_code in (301, 302, 303, 307, 308):
+            raise IClassApiError("统一认证重定向次数过多")
+        return response
 
-        location = response.headers.get("Location")
-        if not location:
-            raise IClassApiError("登录后重定向缺少 Location")
-
-        return self.session.get(location, allow_redirects=True, timeout=20)
+    def _resolve_redirect_url(self, current_url: str, location: str) -> str:
+        mappings = ((VPN_8346, DIRECT_8346), (VPN_8347, DIRECT_8347),
+                    (VPN_SSO, "https://sso.buaa.edu.cn"))
+        location = location.strip()
+        if location.startswith(("/https/", "/http/", "/https-", "/http-")):
+            return urljoin("https://d.buaa.edu.cn", location)
+        # Resolve relative paths against the original upstream origin before wrapping.
+        for vpn, direct in mappings:
+            if self._matches_base(current_url, vpn):
+                current_url = direct + current_url[len(vpn):]
+                break
+        target = urljoin(current_url, location)
+        if self.use_vpn:
+            for vpn, direct in mappings:
+                if self._matches_base(target, direct):
+                    return vpn + target[len(direct):]
+        return target
 
     def _service_home(self) -> str:
         return VPN_8346 if self.use_vpn else DIRECT_8346
@@ -344,23 +406,76 @@ class IClassClient:
         return VPN_8347 if self.use_vpn else DIRECT_8347
 
     def _looks_like_iclass(self, url: str) -> bool:
-        return "iclass.buaa.edu.cn" in url or "d.buaa.edu.cn/https-834" in url
+        parsed = urlparse(url)
+        return parsed.hostname == "iclass.buaa.edu.cn" or any(
+            self._matches_base(url, base) for base in (VPN_8346, VPN_8347)
+        )
+
+    @staticmethod
+    def _matches_base(url: str, base: str) -> bool:
+        return url == base or any(url.startswith(base + delimiter) for delimiter in ("/", "?", "#"))
 
     def _maybe_capture_login_name(self, url: str) -> None:
-        try:
-            parsed = urlparse(url)
-            query = parse_qs(parsed.query)
-            login_name = query.get("loginName", [None])[0]
-            if login_name:
-                self._login_name = login_name
-        except Exception:
-            pass
+        if not self._looks_like_iclass(url):
+            return
+        # loginName may contain bare '+' in base64. parse_qs would corrupt it.
+        for part in urlparse(url).query.split("&"):
+            key, separator, value = part.partition("=")
+            if separator and key.lower() == "loginname" and value:
+                self._login_name = unquote(value)
+                return
 
-    def _to_json_or_none(self, response: requests.Response) -> Any | None:
+    def _request(self, method: str, url: str, operation: str, **kwargs: Any) -> requests.Response:
         try:
-            return response.json()
+            return getattr(self.session, method)(url, timeout=20, **kwargs)
+        except requests.RequestException as exc:
+            # Exception URLs may contain CAS tickets or the encrypted loginName.
+            raise IClassApiError(f"{operation}网络请求失败（{type(exc).__name__}）") from None
+
+    def _read_json(self, response: requests.Response, operation: str) -> dict[str, Any]:
+        if response.status_code in (401, 403):
+            raise _SessionExpired(f"{operation}登录状态失效（HTTP {response.status_code}）")
+        if response.status_code in (301, 302, 303, 307, 308):
+            target = urlparse(self._resolve_redirect_url(response.url, response.headers.get("Location", "")))
+            if (target.hostname == "sso.buaa.edu.cn" and target.path == "/login") or (
+                target.hostname == "d.buaa.edu.cn"
+                and (target.path == "/login" or target.path == urlparse(VPN_SSO).path + "/login")
+            ):
+                raise _SessionExpired(f"{operation}被重定向到统一认证，请重新登录")
+        if not 200 <= response.status_code < 300:
+            raise IClassApiError(f"{operation}失败（HTTP {response.status_code}）")
+        try:
+            data = response.json()
         except ValueError:
-            return None
+            raise IClassApiError(f"{operation}返回非 JSON 响应，请检查统一认证或网络状态") from None
+        if not isinstance(data, dict):
+            raise IClassApiError(f"{operation}返回的数据结构异常")
+        return data
+
+    @staticmethod
+    def _error_message(data: dict[str, Any], operation: str) -> str:
+        message = str(data.get("ERRMSG") or "服务器未提供错误信息")
+        code = str(data.get("ERRCODE") or data.get("STATUS") or "未知")
+        return f"{operation}: {message}（错误码 {code}）"
+
+    def _check_session(self, data: dict[str, Any]) -> None:
+        if str(data.get("STATUS")) not in SUCCESS_STATUSES and "登录" in str(data.get("ERRMSG", "")):
+            raise _SessionExpired(self._error_message(data, "iClass 登录状态失效"))
+
+    def _refresh_auth_context(self) -> None:
+        self._ensure_login()
+        assert self.auth
+        student_id = self.auth.student_id
+        self.auth = None
+        self._login_name = None
+        response = self._request(
+            "get", f"{self._service_home()}/?type=jumpMyCenter",
+            "刷新 iClass 登录标识", allow_redirects=False,
+        )
+        self._follow_redirect(response)
+        if not self._login_name:
+            raise IClassApiError("统一认证会话已失效，请重新登录")
+        self._fetch_auth_context(student_id)
 
     def _headers(self) -> dict[str, str]:
         assert self.auth is not None
@@ -375,21 +490,30 @@ class IClassClient:
             "sessionId": self.auth.session_header,
         }
 
+    def _timestamp_endpoints(self) -> list[str]:
+        base = VPN_8347 if self.use_vpn else DIRECT_8081
+        return [f"{base}/app/common/get_timestamp.action"]
+
     def _sign_endpoints(self) -> list[str]:
         if self.use_vpn:
             return [f"{VPN_8347}/app/course/stu_scan_sign.action"]
-        return [
-            "http://iclass.buaa.edu.cn:8081/app/course/stu_scan_sign.action",
-            f"{DIRECT_8346}/eschool/app/course/stu_scan_sign.action",
-        ]
+        return [f"{DIRECT_8081}/eschool/app/course/stu_scan_sign.action"]
 
-    def _parse_dt(self, value: Any) -> datetime | None:
+    def _parse_dt(self, value: Any, target_date: date | None = None) -> datetime | None:
         if value is None:
             return None
 
         text = str(value).strip()
         if not text:
             return None
+
+        if target_date is not None:
+            for pattern in ("%H:%M:%S", "%H:%M"):
+                try:
+                    parsed_time = datetime.strptime(text, pattern).time()
+                    return datetime.combine(target_date, parsed_time, tzinfo=SHANGHAI_TZ)
+                except ValueError:
+                    continue
 
         patterns = [
             "%Y-%m-%d %H:%M:%S",
