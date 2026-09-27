@@ -68,9 +68,12 @@ def login():
         return redirect(url_for("index"))
 
     client = IClassClient(use_vpn=use_vpn, verify_ssl=verify_ssl)
+    token = str(uuid4())
     try:
         auth = client.login(student_id=student_id, password=password)
+        service.register_user(token, client)
     except Exception as exc:  # noqa: BLE001
+        client.session.close()
         session["login_error"] = f"登录失败：{exc}"
         session["login_form"] = {
             "student_id": student_id,
@@ -79,8 +82,9 @@ def login():
         }
         return redirect(url_for("index"))
 
-    token = str(uuid4())
-    service.register_user(token, client)
+    old_token = session.get("runtime_token")
+    if old_token:
+        service.unregister_user(old_token)
 
     session.pop("login_error", None)
     session.pop("login_form", None)

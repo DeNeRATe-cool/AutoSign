@@ -47,7 +47,14 @@ function formatCountdown(totalSeconds) {
   return `${hh}:${mm}:${ss}`;
 }
 
+function hasConfirmedSign(attendance) {
+  return ["正常出勤", "迟到", "已签到（待同步）"].includes(attendance);
+}
+
 function attendanceMeta(attendance) {
+  if (attendance === "已签到（待同步）") {
+    return { cls: "status status-ok", text: "已签到（待同步）" };
+  }
   if (attendance === "正常出勤") {
     return { cls: "status status-ok", text: "正常" };
   }
@@ -60,7 +67,7 @@ function attendanceMeta(attendance) {
 function attendanceMetaForRow(row, nowMs) {
   const attendance = row.attendance || "";
   const startMs = new Date(row.startTime).getTime();
-  if (attendance === "正常出勤" || attendance === "迟到") {
+  if (hasConfirmedSign(attendance)) {
     if (Number.isFinite(startMs) && nowMs < startMs) {
       return { cls: "status status-ok", text: "已签到" };
     }
@@ -116,7 +123,7 @@ function renderStats() {
 
 function resolveCountdownText(row, nowMs) {
   const attendance = row.attendance || "";
-  if (attendance === "正常出勤" || attendance === "迟到") {
+  if (hasConfirmedSign(attendance)) {
     return { text: "已签到", state: "done" };
   }
 
@@ -174,7 +181,7 @@ function signButtonMeta(row, nowMs) {
     nowMs >= preSignStartMs &&
     nowMs <= endMs;
 
-  if (attendance === "正常出勤" || attendance === "迟到") {
+  if (hasConfirmedSign(attendance)) {
     return { canSign: false, text: "已签到", mode: "done" };
   }
 
@@ -186,7 +193,7 @@ function signButtonMeta(row, nowMs) {
     return { canSign: true, text: "可签到", mode: "presign" };
   }
 
-  return { canSign: true, text: "迟到签到", mode: "late" };
+  return { canSign: true, text: "立即签到", mode: "during" };
 }
 
 async function apiGet(path) {
@@ -252,11 +259,10 @@ function renderWeekRows() {
   document.querySelectorAll("button[data-sign]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const key = btn.getAttribute("data-sign");
-      const mode = btn.getAttribute("data-sign-mode") || "normal";
       if (!key) return;
 
       btn.disabled = true;
-      btn.textContent = mode === "late" ? "迟到签到中..." : "签到中...";
+      btn.textContent = "签到中...";
       try {
         const result = await apiPost("/api/sign-now", { key });
         announce(result.message || "签到请求已提交", "info");

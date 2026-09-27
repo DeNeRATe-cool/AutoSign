@@ -23,7 +23,6 @@ class UserRuntimeState:
     pre_sign_stop_logged: set[str] = field(default_factory=set)
     late_sign_hint_logged: set[str] = field(default_factory=set)
     completed_sign_keys: set[str] = field(default_factory=set)
-    attendance_overrides: dict[str, str] = field(default_factory=dict)
     events: deque[RuntimeEvent] = field(default_factory=lambda: deque(maxlen=200))
     last_sync_at: datetime | None = None
     last_sync_week_anchor: date | None = None
@@ -45,10 +44,12 @@ class AutoSignService:
 
     def register_user(self, token: str, client: IClassClient) -> None:
         state = UserRuntimeState(client=client)
+        # 先验证首次课表同步，失败时不会留下没有浏览器会话的后台任务。
+        with state.lock:
+            self._refresh_week(state, force=True)
+            self._append_event(state, "info", "登录成功，自动签到服务已启动")
         with self._lock:
             self.users[token] = state
-        self._append_event(state, "info", "登录成功，自动签到服务已启动")
-        self._refresh_week(state, force=True)
 
     def unregister_user(self, token: str) -> None:
         with self._lock:
@@ -57,7 +58,13 @@ class AutoSignService:
     def get_week_sessions(self, token: str) -> list[dict[str, Any]]:
         state = self._get_state(token)
         with state.lock:
-            return [s.to_dict() for s in sorted(state.week_sessions.values(), key=lambda x: x.start_time)]
+            rows = []
+            for item in sorted(state.week_sessions.values(), key=lambda x: x.start_time):
+                row = item.to_dict()
+                if item.key in state.completed_sign_keys and item.raw_status == "0":
+                    row["attendance"] = "已签到（待同步）"
+                rows.append(row)
+            return rows
 
     def get_pending_notifications(self, token: str) -> list[dict[str, Any]]:
         state = self._get_state(token)
@@ -87,21 +94,15 @@ class AutoSignService:
                 return {"ok": False, "message": "不支持的操作"}
 
             session = state.week_sessions.get(prompt.key)
-            timestamp_ms = None
-            attendance_raw_status: str | None = None
             if session is not None:
                 now = datetime.now(tz=SHANGHAI_TZ)
                 if not self._is_signable_now(now, session.start_time, session.end_time):
                     return {"ok": False, "message": "当前不在签到窗口，无法签到"}
-                timestamp_ms = state.client.get_adjusted_timestamp_ms(now)
-                attendance_raw_status = "2" if now >= session.start_time else "1"
             return self._do_sign(
                 state,
                 prompt.schedule_id,
                 reason="用户确认立即签到",
-                timestamp_ms=timestamp_ms,
                 session_key=key,
-                attendance_raw_status=attendance_raw_status,
                 event_meta={
                     "course": prompt.course_name,
                     "now": now.isoformat(),
@@ -116,8 +117,6 @@ class AutoSignService:
         state = self._get_state(token)
         with state.lock:
             reason = "用户手动签到"
-            timestamp_ms: int | None = None
-            attendance_raw_status: str | None = None
             if key:
                 if key in state.completed_sign_keys:
                     return {"ok": False, "message": "当前课程已签到"}
@@ -158,21 +157,15 @@ class AutoSignService:
                     return {"ok": False, "message": "当前不在签到窗口，无法签到"}
 
                 if now >= session.start_time:
-                    reason = "用户手动迟到签到"
-                timestamp_ms = state.client.get_adjusted_timestamp_ms(now)
-                attendance_raw_status = "2" if now >= session.start_time else "1"
+                    reason = "开课后手动签到"
             elif not schedule_id:
                 return {"ok": False, "message": "缺少 schedule_id"}
-            else:
-                timestamp_ms = state.client.get_adjusted_timestamp_ms()
 
             return self._do_sign(
                 state,
                 schedule_id,
                 reason=reason,
-                timestamp_ms=timestamp_ms,
                 session_key=key if key else None,
-                attendance_raw_status=attendance_raw_status,
                 event_meta={
                     "course": session.course_name if key and session else schedule_id,
                     "now": now.isoformat() if key else datetime.now(tz=SHANGHAI_TZ).isoformat(),
@@ -293,9 +286,7 @@ class AutoSignService:
                             state,
                             session.schedule_id,
                             reason=f"{window_stage}自动签到",
-                            timestamp_ms=state.client.get_adjusted_timestamp_ms(now),
                             session_key=key,
-                            attendance_raw_status="2" if now >= session.start_time else "1",
                             event_meta={
                                 "course": session.course_name,
                                 "now": now.isoformat(),
@@ -345,15 +336,6 @@ class AutoSignService:
         state.pre_sign_stop_logged.intersection_update(active_keys)
         state.late_sign_hint_logged.intersection_update(active_keys)
         state.completed_sign_keys.intersection_update(active_keys)
-        state.attendance_overrides = {
-            key: raw_status
-            for key, raw_status in state.attendance_overrides.items()
-            if key in active_keys
-        }
-        for key, raw_status in state.attendance_overrides.items():
-            session = state.week_sessions.get(key)
-            if session is not None:
-                session.raw_status = raw_status
         state.pending_prompts = {k: v for k, v in state.pending_prompts.items() if k in active_keys}
         state.last_sync_at = now
         state.last_sync_week_anchor = current_week_anchor
@@ -363,13 +345,11 @@ class AutoSignService:
         state: UserRuntimeState,
         schedule_id: str,
         reason: str,
-        timestamp_ms: int | None = None,
         session_key: str | None = None,
-        attendance_raw_status: str | None = None,
         event_meta: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         try:
-            resp = state.client.sign_now(schedule_id, timestamp_ms=timestamp_ms)
+            resp = state.client.sign_now(schedule_id)
         except Exception as exc:  # noqa: BLE001
             message = f"{reason}失败: {exc}"
             self._append_event(
@@ -379,14 +359,13 @@ class AutoSignService:
                 meta={
                     **(event_meta or {}),
                     "schedule_id": schedule_id,
-                    "timestamp_ms": timestamp_ms,
                     "reason": reason,
                 },
             )
             return {"ok": False, "message": message}
 
         status = str(resp.get("STATUS", "")) if isinstance(resp, dict) else ""
-        if status == "0":
+        if IClassClient.is_sign_success(resp):
             if session_key is not None:
                 state.completed_sign_keys.add(session_key)
                 state.pending_prompts.pop(session_key, None)
@@ -394,11 +373,6 @@ class AutoSignService:
                 state.pre_sign_window_logged.discard(session_key)
                 state.pre_sign_stop_logged.discard(session_key)
                 state.late_sign_hint_logged.discard(session_key)
-            if session_key is not None and attendance_raw_status is not None:
-                state.attendance_overrides[session_key] = attendance_raw_status
-                session = state.week_sessions.get(session_key)
-                if session is not None:
-                    session.raw_status = attendance_raw_status
             self._append_event(
                 state,
                 "success",
@@ -406,12 +380,15 @@ class AutoSignService:
                 meta={
                     **(event_meta or {}),
                     "schedule_id": schedule_id,
-                    "timestamp_ms": timestamp_ms,
                     "reason": reason,
                     "response_status": status,
                 },
             )
-            self._refresh_week(state, force=True)
+            try:
+                self._refresh_week(state, force=True)
+            except Exception as exc:  # noqa: BLE001
+                # 签到已由服务器确认，后续查询失败不能把它改写为失败或再次提交。
+                self._append_event(state, "warning", f"签到已成功，课表状态暂未同步: {exc}")
             return {"ok": True, "message": f"{reason}成功", "data": resp}
 
         errmsg = resp.get("ERRMSG", "未知错误") if isinstance(resp, dict) else "响应格式异常"
@@ -423,7 +400,6 @@ class AutoSignService:
             meta={
                 **(event_meta or {}),
                 "schedule_id": schedule_id,
-                "timestamp_ms": timestamp_ms,
                 "reason": reason,
                 "response_status": status or None,
                 "response": resp if isinstance(resp, dict) else None,
